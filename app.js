@@ -1,20 +1,18 @@
 (function () {
   "use strict";
 
-  var STORAGE_KEY = "prompt-library.prompts";
+  const STORAGE_KEY = "promptLibrary";
+  const PREVIEW_WORDS = 12;
 
-  var form = document.getElementById("prompt-form");
-  var titleInput = document.getElementById("title");
-  var contentInput = document.getElementById("content");
-  var list = document.getElementById("prompt-list");
-  var emptyState = document.getElementById("empty-state");
-  var countEl = document.getElementById("count");
+  const form = document.getElementById("prompt-form");
+  const titleInput = document.getElementById("title");
+  const contentInput = document.getElementById("content");
+  const list = document.getElementById("prompt-list");
+  const emptyState = document.getElementById("empty-state");
 
   function loadPrompts() {
     try {
-      var raw = localStorage.getItem(STORAGE_KEY);
-      var parsed = raw ? JSON.parse(raw) : [];
-      return Array.isArray(parsed) ? parsed : [];
+      return JSON.parse(localStorage.getItem(STORAGE_KEY)) || [];
     } catch (e) {
       return [];
     }
@@ -24,68 +22,61 @@
     localStorage.setItem(STORAGE_KEY, JSON.stringify(prompts));
   }
 
-  function render() {
-    var prompts = loadPrompts();
-    list.innerHTML = "";
-    countEl.textContent = String(prompts.length);
-    emptyState.classList.toggle("hidden", prompts.length > 0);
-
-    prompts.forEach(function (prompt) {
-      list.appendChild(createPromptElement(prompt));
-    });
+  function makePreview(content) {
+    const words = content.trim().split(/\s+/);
+    const preview = words.slice(0, PREVIEW_WORDS).join(" ");
+    return words.length > PREVIEW_WORDS ? preview + "…" : preview;
   }
 
-  function createPromptElement(prompt) {
-    var item = document.createElement("article");
-    item.className = "prompt-item";
+  function render() {
+    const prompts = loadPrompts();
+    list.innerHTML = "";
+    emptyState.style.display = prompts.length ? "none" : "block";
 
-    var head = document.createElement("div");
-    head.className = "prompt-item-head";
+    prompts.forEach(function (prompt) {
+      const card = document.createElement("div");
+      card.className = "card";
 
-    var title = document.createElement("h3");
-    title.textContent = prompt.title;
+      const title = document.createElement("h3");
+      title.className = "card-title";
+      title.textContent = prompt.title;
 
-    var deleteBtn = document.createElement("button");
-    deleteBtn.type = "button";
-    deleteBtn.className = "btn btn-danger";
-    deleteBtn.textContent = "Delete";
-    deleteBtn.addEventListener("click", function () {
-      deletePrompt(prompt.id);
+      const preview = document.createElement("p");
+      preview.className = "card-preview";
+      preview.textContent = makePreview(prompt.content);
+
+      const del = document.createElement("button");
+      del.className = "btn-delete";
+      del.type = "button";
+      del.textContent = "Delete";
+      del.addEventListener("click", function () {
+        deletePrompt(prompt.id);
+      });
+
+      card.appendChild(title);
+      card.appendChild(preview);
+      card.appendChild(del);
+      list.appendChild(card);
     });
-
-    head.appendChild(title);
-    head.appendChild(deleteBtn);
-
-    var content = document.createElement("p");
-    content.className = "prompt-content";
-    content.textContent = prompt.content;
-
-    item.appendChild(head);
-    item.appendChild(content);
-    return item;
   }
 
   function deletePrompt(id) {
-    var prompts = loadPrompts().filter(function (p) {
+    const prompts = loadPrompts().filter(function (p) {
       return p.id !== id;
     });
     savePrompts(prompts);
     render();
   }
 
-  form.addEventListener("submit", function (event) {
-    event.preventDefault();
+  form.addEventListener("submit", function (e) {
+    e.preventDefault();
+    const title = titleInput.value.trim();
+    const content = contentInput.value.trim();
+    if (!title || !content) return;
 
-    var title = titleInput.value.trim();
-    var content = contentInput.value.trim();
-    if (!title || !content) {
-      return;
-    }
-
-    var prompts = loadPrompts();
+    const prompts = loadPrompts();
     prompts.unshift({
-      id:
-        Date.now().toString(36) + Math.random().toString(36).slice(2, 8),
+      id: Date.now().toString(36) + Math.random().toString(36).slice(2),
       title: title,
       content: content,
     });

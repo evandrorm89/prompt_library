@@ -13,6 +13,19 @@
   const list = document.getElementById("prompt-list");
   const emptyState = document.getElementById("empty-state");
 
+  const exportBtn = document.getElementById("export-btn");
+  const importBtn = document.getElementById("import-btn");
+  const importFile = document.getElementById("import-file");
+  const ioStatus = document.getElementById("io-status");
+
+  const modalOverlay = document.getElementById("modal-overlay");
+  const modalTitle = document.getElementById("modal-title");
+  const modalBody = document.getElementById("modal-body");
+  const modalActions = document.getElementById("modal-actions");
+
+  // Separate key so a failed import can restore the pre-import library.
+  const BACKUP_KEY = "promptLibrary.backup";
+
   // Prompt IDs whose note is currently being edited (transient, not persisted).
   const editing = new Set();
 
@@ -397,6 +410,223 @@
     } catch (err) {
       showError(err.message);
     }
+  });
+
+  // ---- Export / import status line -------------------------------------
+
+  // Shows a transient status message under the toolbar. `kind` styles it as
+  // "success" or "error"; anything else is neutral.
+  function setStatus(message, kind) {
+    ioStatus.textContent = message || "";
+    ioStatus.className = "io-status" + (kind ? " io-status-" + kind : "");
+  }
+
+  // ---- Modal conflict dialog -------------------------------------------
+
+  // Opens the dialog with a title, body and a set of { label, value, kind }
+  // buttons. Resolves with the chosen value, or null if dismissed (backdrop
+  // click or Escape). Only one dialog is expected open at a time.
+  function openDialog(title, body, buttons) {
+    return new Promise(function (resolve) {
+      modalTitle.textContent = title;
+      modalBody.textContent = body;
+      modalActions.innerHTML = "";
+
+      function close(value) {
+        modalOverlay.hidden = true;
+        modalOverlay.removeEventListener("click", onBackdrop);
+        document.removeEventListener("keydown", onKey);
+        resolve(value);
+      }
+
+      function onBackdrop(e) {
+        if (e.target === modalOverlay) close(null);
+      }
+      function onKey(e) {
+        if (e.key === "Escape") close(null);
+      }
+
+      buttons.forEach(function (btn) {
+        const el = document.createElement("button");
+        el.type = "button";
+        el.className = "btn-modal" + (btn.kind ? " btn-modal-" + btn.kind : "");
+        el.textContent = btn.label;
+        el.addEventListener("click", function () {
+          close(btn.value);
+        });
+        modalActions.appendChild(el);
+      });
+
+      modalOverlay.hidden = false;
+      modalOverlay.addEventListener("click", onBackdrop);
+      document.addEventListener("keydown", onKey);
+      const first = modalActions.querySelector("button");
+      if (first) first.focus();
+    });
+  }
+
+  // ---- Export ----------------------------------------------------------
+
+  function exportPrompts() {
+    try {
+      const prompts = loadPrompts();
+      if (prompts.length === 0) {
+        setStatus("Nothing to export — your library is empty.", "error");
+        return;
+      }
+      const payload = PromptExport.buildExport(prompts);
+      const blob = new Blob([JSON.stringify(payload, null, 2)], {
+        type: "application/json",
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = PromptExport.exportFilename();
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      setStatus(
+        "Exported " + prompts.length + " prompt" +
+          (prompts.length === 1 ? "" : "s") + " to " + a.download + ".",
+        "success"
+      );
+    } catch (err) {
+      setStatus("Export failed: " + err.message, "error");
+    }
+  }
+
+  // ---- Import ----------------------------------------------------------
+
+  // Reads a File as text via a Promise so the flow can be written linearly.
+  function readFileText(file) {
+    return new Promise(function (resolve, reject) {
+      const reader = new FileReader();
+      reader.onload = function () {
+        resolve(reader.result);
+      };
+      reader.onerror = function () {
+        reject(new Error("Could not read the selected file."));
+      };
+      reader.readAsText(file);
+    });
+  }
+
+  // Persists the merged library, backing up the current one first and rolling
+  // back if the write throws (e.g. localStorage quota exceeded).
+  function commitImport(merged) {
+    const previous = localStorage.getItem(STORAGE_KEY);
+    if (previous !== null) {
+      localStorage.setItem(BACKUP_KEY, previous);
+    }
+    try {
+      savePrompts(merged);
+      // Import succeeded — discard the safety backup.
+      localStorage.removeItem(BACKUP_KEY);
+      render();
+    } catch (err) {
+      // Roll back to the exact prior state.
+      if (previous === null) {
+        localStorage.removeItem(STORAGE_KEY);
+      } else {
+        localStorage.setItem(STORAGE_KEY, previous);
+      }
+      localStorage.removeItem(BACKUP_KEY);
+      render();
+      throw new Error(
+        "Import could not be saved (" + err.message +
+          "). Your existing library was restored."
+      );
+    }
+  }
+
+  // Turns a merge summary into a short human-readable sentence.
+  function describeResult(summary) {
+    const parts = [];
+    if (summary.added) parts.push(summary.added + " added");
+    if (summary.overwritten) parts.push(summary.overwritten + " replaced");
+    if (summary.skipped) parts.push(summary.skipped + " skipped");
+    return parts.length ? parts.join(", ") + "." : "No changes.";
+  }
+
+  async function importPrompts(file) {
+    setStatus("Reading " + file.name + "…");
+    let payload;
+    try {
+      const text = await readFileText(file);
+      let data;
+      try {
+        data = JSON.parse(text);
+      } catch (e) {
+        throw new Error("File is not valid JSON.");
+      }
+      payload = PromptExport.validateImport(data);
+    } catch (err) {
+      setStatus("Import failed: " + err.message, "error");
+      return;
+    }
+
+    const existing = loadPrompts();
+    const conflicts = PromptExport.findConflicts(existing, payload.prompts);
+
+    // Decide the merge strategy, prompting only when there is a real conflict.
+    let mode;
+    if (existing.length === 0) {
+      mode = "skip"; // nothing to conflict with; every prompt is simply added
+    } else if (conflicts.length === 0) {
+      const choice = await openDialog(
+        "Import " + payload.prompts.length + " prompt(s)",
+        "No conflicts with your " + existing.length +
+          " existing prompt(s). How would you like to import?",
+        [
+          { label: "Merge (add all)", value: "skip", kind: "primary" },
+          { label: "Replace entire library", value: "replace-all", kind: "danger" },
+          { label: "Cancel", value: null },
+        ]
+      );
+      if (!choice) {
+        setStatus("Import cancelled.");
+        return;
+      }
+      mode = choice;
+    } else {
+      const choice = await openDialog(
+        "Resolve " + conflicts.length + " conflict(s)",
+        conflicts.length +
+          " imported prompt(s) share an id with prompts you already have. " +
+          "Choose how to resolve the overlap:",
+        [
+          { label: "Keep mine (skip conflicts)", value: "skip", kind: "primary" },
+          { label: "Use imported (overwrite)", value: "overwrite" },
+          { label: "Replace entire library", value: "replace-all", kind: "danger" },
+          { label: "Cancel", value: null },
+        ]
+      );
+      if (!choice) {
+        setStatus("Import cancelled.");
+        return;
+      }
+      mode = choice;
+    }
+
+    try {
+      const summary = PromptExport.mergePrompts(existing, payload.prompts, mode);
+      commitImport(summary.prompts);
+      setStatus("Import complete — " + describeResult(summary), "success");
+    } catch (err) {
+      setStatus(err.message, "error");
+    }
+  }
+
+  exportBtn.addEventListener("click", exportPrompts);
+  importBtn.addEventListener("click", function () {
+    importFile.click();
+  });
+  importFile.addEventListener("change", function () {
+    const file = importFile.files && importFile.files[0];
+    if (file) importPrompts(file);
+    // Reset so selecting the same file again still fires "change".
+    importFile.value = "";
   });
 
   render();

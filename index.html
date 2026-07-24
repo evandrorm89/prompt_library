@@ -31,13 +31,31 @@
     </form>
 
     <section class="library">
-      <h2>Saved Prompts</h2>
+      <div class="library-head">
+        <h2>Saved Prompts</h2>
+        <div class="toolbar">
+          <button type="button" id="export-btn" class="btn-tool">Export</button>
+          <button type="button" id="import-btn" class="btn-tool">Import</button>
+          <input type="file" id="import-file" accept="application/json,.json" hidden>
+        </div>
+      </div>
+      <p id="io-status" class="io-status" role="status" aria-live="polite"></p>
       <div id="prompt-list" class="prompt-list"></div>
       <p id="empty-state" class="empty-state">No prompts saved yet. Add one above.</p>
     </section>
   </div>
 
+  <!-- Conflict-resolution dialog, shown when an import overlaps existing ids. -->
+  <div id="modal-overlay" class="modal-overlay" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+      <h3 id="modal-title" class="modal-title"></h3>
+      <p id="modal-body" class="modal-body"></p>
+      <div id="modal-actions" class="modal-actions"></div>
+    </div>
+  </div>
+
   <script src="metadata.js"></script>
+  <script src="exportImport.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

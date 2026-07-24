@@ -11,12 +11,15 @@
   const list = document.getElementById("prompt-list");
   const emptyState = document.getElementById("empty-state");
 
+  // Prompt IDs whose note is currently being edited (transient, not persisted).
+  const editing = new Set();
+
   function loadPrompts() {
     try {
       const prompts = JSON.parse(localStorage.getItem(STORAGE_KEY)) || [];
-      // Migrate older prompts that predate the rating feature.
+      // Migrate older prompts that predate the rating / note features.
       return prompts.map(function (p) {
-        return Object.assign({ rating: 0 }, p);
+        return Object.assign({ rating: 0, note: "" }, p);
       });
     } catch (e) {
       return [];
@@ -107,6 +110,95 @@
     return wrap;
   }
 
+  // Persists a note; saving an empty note removes it. Retrieved via loadPrompts().
+  function saveNote(id, text) {
+    const prompts = loadPrompts();
+    const prompt = prompts.find(function (p) {
+      return p.id === id;
+    });
+    if (!prompt) return;
+    prompt.note = text.trim();
+    savePrompts(prompts);
+    editing.delete(id);
+    render();
+  }
+
+  function deleteNote(id) {
+    saveNote(id, "");
+  }
+
+  // Builds the notes area for a prompt: editor when editing or empty, else read-only.
+  function buildNotes(prompt) {
+    const wrap = document.createElement("div");
+    wrap.className = "notes";
+
+    const isEditing = editing.has(prompt.id);
+
+    if (isEditing || !prompt.note) {
+      const label = document.createElement("label");
+      label.className = "notes-label";
+      const fieldId = "note-" + prompt.id;
+      label.setAttribute("for", fieldId);
+      label.textContent = "Notes";
+
+      const textarea = document.createElement("textarea");
+      textarea.id = fieldId;
+      textarea.className = "notes-input";
+      textarea.rows = 3;
+      textarea.placeholder = "No notes yet. Add one...";
+      textarea.value = prompt.note;
+
+      const save = document.createElement("button");
+      save.type = "button";
+      save.className = "btn-note-save";
+      save.textContent = "Save";
+      save.addEventListener("click", function () {
+        saveNote(prompt.id, textarea.value);
+      });
+
+      wrap.appendChild(label);
+      wrap.appendChild(textarea);
+      wrap.appendChild(save);
+    } else {
+      const label = document.createElement("span");
+      label.className = "notes-label";
+      label.textContent = "Notes";
+
+      const text = document.createElement("p");
+      text.className = "notes-text";
+      text.textContent = prompt.note;
+
+      const actions = document.createElement("div");
+      actions.className = "notes-actions";
+
+      const edit = document.createElement("button");
+      edit.type = "button";
+      edit.className = "btn-note";
+      edit.textContent = "Edit";
+      edit.addEventListener("click", function () {
+        editing.add(prompt.id);
+        render();
+      });
+
+      const del = document.createElement("button");
+      del.type = "button";
+      del.className = "btn-note btn-note-delete";
+      del.textContent = "Delete";
+      del.addEventListener("click", function () {
+        deleteNote(prompt.id);
+      });
+
+      actions.appendChild(edit);
+      actions.appendChild(del);
+
+      wrap.appendChild(label);
+      wrap.appendChild(text);
+      wrap.appendChild(actions);
+    }
+
+    return wrap;
+  }
+
   function render() {
     const prompts = loadPrompts();
     list.innerHTML = "";
@@ -140,6 +232,7 @@
 
       card.appendChild(title);
       card.appendChild(preview);
+      card.appendChild(buildNotes(prompt));
       card.appendChild(footer);
       list.appendChild(card);
     });
@@ -165,6 +258,7 @@
       title: title,
       content: content,
       rating: 0,
+      note: "",
     });
     savePrompts(prompts);
 
